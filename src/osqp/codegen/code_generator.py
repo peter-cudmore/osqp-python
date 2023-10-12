@@ -13,7 +13,7 @@ from . import utils
 
 
 def codegen(work, target_dir, python_ext_name, project_type, compile_python_ext, embedded,
-            force_rewrite, float_flag, long_flag):
+            force_rewrite, float_flag, long_flag, namespace=None, workspace_only=False):
     """
     Generate code
     """
@@ -62,7 +62,6 @@ def codegen(work, target_dir, python_ext_name, project_type, compile_python_ext,
     sys.stdout.write("Creating target directories... \t\t\t\t\t")
     sys.stdout.flush()
     target_dir = os.path.abspath(target_dir)
-    target_include_dir = os.path.join(target_dir, 'include')
     target_configure_dir = os.path.join(target_dir, 'configure')
     target_include_dir = os.path.join(target_dir, 'include')
     target_src_dir = os.path.join(target_dir, 'src')
@@ -77,46 +76,49 @@ def codegen(work, target_dir, python_ext_name, project_type, compile_python_ext,
         os.makedirs(os.path.join(target_src_dir, 'osqp'))
     print("[done]")
 
-    # Copy source files to target directory
-    sys.stdout.write("Copying OSQP sources... \t\t\t\t\t")
-    sys.stdout.flush()
-    c_sources = glob(os.path.join(osqp_path, 'codegen', 'sources',
-                                  'src', '*.c'))
-    if embedded == 1:
-        # Remove kkt.c from embedded sources
-        c_sources.remove(os.path.join(osqp_path, 'codegen', 'sources',
-                                      'src', 'kkt.c'))
-    for source in c_sources:
-        sh.copy(source, os.path.join(target_src_dir, 'osqp'))
+    if not workspace_only:
+        # Copy source files to target directory
+        sys.stdout.write("Copying OSQP sources... \t\t\t\t\t")
+        sys.stdout.flush()
+        c_sources = glob(os.path.join(osqp_path, 'codegen', 'sources',
+                                      'src', '*.c'))
+        if embedded == 1:
+            # Remove kkt.c from embedded sources
+            c_sources.remove(os.path.join(osqp_path, 'codegen', 'sources',
+                                          'src', 'kkt.c'))
+        for source in c_sources:
+            sh.copy(source, os.path.join(target_src_dir, 'osqp'))
 
-    # Copy header files
-    c_headers = glob(os.path.join(osqp_path, 'codegen', 'sources',
-                                  'include', '*.h'))
-    if embedded == 1:
-        # Remove kkt.h from embedded sources
-        c_headers.remove(os.path.join(osqp_path, 'codegen', 'sources',
-                                      'include', 'kkt.h'))
-    for header in c_headers:
-        sh.copy(header, target_include_dir)
+        # Copy header files
+        c_headers = glob(os.path.join(osqp_path, 'codegen', 'sources',
+                                      'include', '*.h'))
+        if embedded == 1:
+            # Remove kkt.h from embedded sources
+            c_headers.remove(os.path.join(osqp_path, 'codegen', 'sources',
+                                          'include', 'kkt.h'))
+        for header in c_headers:
+            sh.copy(header, target_include_dir)
 
-    # Copy config files
-    c_configs = glob(os.path.join(osqp_path, 'codegen', 'sources',
-                                  'configure', '*.h.in'))
-    for config in c_configs:
-        sh.copy(config, target_configure_dir)
+        # Copy config files
+        c_configs = glob(os.path.join(osqp_path, 'codegen', 'sources',
+                                      'configure', '*.h.in'))
+        for config in c_configs:
+            sh.copy(config, target_configure_dir)
 
-    print("[done]")
+        print("[done]")
 
     # Variables created from the workspace
     sys.stdout.write("Generating customized code... \t\t\t\t\t")
     sys.stdout.flush()
+    namespace_str = f"{namespace.replace(' ', '_')}_" if namespace else ""
     template_vars = {'rho_vectors':     work['rho_vectors'],
                      'data':            work['data'],
                      'settings':        work['settings'],
                      'linsys_solver':   work['linsys_solver'],
                      'scaling':         work['scaling'],
                      'embedded_flag':   embedded,
-                     'python_ext_name': python_ext_name}
+                     'python_ext_name': python_ext_name,
+                     'namespace':       namespace_str}
 
     # Add cmake args
     cmake_args = '-DEMBEDDED:INT=%d -DDFLOAT:BOOL=%s -DDLONG:BOOL=%s' % \
@@ -124,8 +126,11 @@ def codegen(work, target_dir, python_ext_name, project_type, compile_python_ext,
 
     # Render workspace
     utils.render_workspace(template_vars,
-                           os.path.join(target_include_dir, 'workspace.h'),
-                           os.path.join(target_src_dir, 'osqp', 'workspace.c'))
+                           os.path.join(target_include_dir, f'{namespace_str}workspace.h'),
+                           os.path.join(target_src_dir, 'osqp', f'{namespace_str}workspace.c'))
+    if workspace_only:
+        print("[done]")
+        return
 
     # Render setup.py
     utils.render_setuppy(template_vars,
@@ -134,11 +139,13 @@ def codegen(work, target_dir, python_ext_name, project_type, compile_python_ext,
     # Render emosqpmodule.c
     utils.render_emosqpmodule(template_vars,
                               os.path.join(target_src_dir,
-                                           '%smodule.c' % python_ext_name))
+                                           '%smodule.c' % python_ext_name),
+                              namespace_str)
 
     # Render CMakelists.txt
     utils.render_cmakelists(template_vars,
-                            os.path.join(target_dir, 'CMakeLists.txt'))
+                            os.path.join(target_dir, 'CMakeLists.txt'),
+                            namespace_str)
 
     # Copy cmake files
     sh.copy(os.path.join(osqp_path, 'codegen', 'sources', 'src', 'CMakeLists.txt'),
@@ -147,7 +154,11 @@ def codegen(work, target_dir, python_ext_name, project_type, compile_python_ext,
             os.path.join(target_include_dir))
 
     # Copy example.c
-    sh.copy(os.path.join(files_to_generate_path, 'example.c'), target_src_dir)
+    utils.render_example(
+        os.path.join(files_to_generate_path, 'example.c'),
+        os.path.join(target_src_dir, 'example.c'),
+        namespace_str
+    )
 
     print("[done]")
 

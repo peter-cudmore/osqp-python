@@ -268,7 +268,10 @@ class OSQP(object):
 
     def codegen(self, folder, project_type='', parameters='vectors',
                 python_ext_name='emosqp', force_rewrite=False, compile_python_ext=True,
-                FLOAT=False, LONG=True):
+                FLOAT=False, LONG=True,
+                namespace=None,
+                workspace_only=False
+                ):
         """
         Generate embeddable C code for the problem
         """
@@ -311,7 +314,7 @@ class OSQP(object):
 
         # Generate code with codegen module
         cg.codegen(work, folder, python_ext_name, project_type, compile_python_ext,
-                   embedded, force_rewrite, float_flag, long_flag)
+                   embedded, force_rewrite, float_flag, long_flag, namespace, workspace_only)
 
     def derivative_iterative_refinement(self, rhs, max_iter=20, tol=1e-12):
         M = self._derivative_cache['M']
